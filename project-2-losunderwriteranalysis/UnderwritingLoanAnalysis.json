@@ -1,0 +1,654 @@
+{
+  "name": "UnderwritingLoanAnalysis",
+  "nodes": [
+    {
+      "parameters": {
+        "resource": "folder",
+        "operation": "search",
+        "query": "LOS"
+      },
+      "type": "n8n-nodes-base.microsoftOneDrive",
+      "typeVersion": 1,
+      "position": [
+        624,
+        0
+      ],
+      "id": "0d40759f-812a-4972-ba74-e42c8d5aa258",
+      "name": "Search a folder",
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "<Microsoft API Key>",
+          "name": "Microsoft Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "folderId": "={{ $json.id }}"
+      },
+      "type": "n8n-nodes-base.microsoftOneDrive",
+      "typeVersion": 1,
+      "position": [
+        832,
+        0
+      ],
+      "id": "65de0a29-5e09-41ae-b14c-e83a10eb1be5",
+      "name": "Get items in a folder",
+      "alwaysOutputData": true,
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "<Microsoft API Key>",
+          "name": "Microsoft Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": "={{ $('Get items in a folder').item.json.id }}"
+      },
+      "type": "n8n-nodes-base.microsoftOneDrive",
+      "typeVersion": 1,
+      "position": [
+        1216,
+        80
+      ],
+      "id": "bdfdb814-df76-42ff-8b07-926c7e7d48c2",
+      "name": "Download a file",
+      "alwaysOutputData": true,
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "<Microsoft API Key>",
+          "name": "Microsoft Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mistralAi",
+      "typeVersion": 1,
+      "position": [
+        1376,
+        80
+      ],
+      "id": "bcd0718c-df22-41e1-9754-a2298877ae43",
+      "name": "Extract text",
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "<Mistral API Key>",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// get filename from Download node\nconst fileName = ($('Download a file').first().json.name || '').toLowerCase();\n\n// get extracted text from OCR node\nconst text = ($input.first().json.extractedText || '').toLowerCase();\n\nlet type = \"Unknown\";\n\n// --- Rule-based classification ---\n\n// Priority 1: File name clues\nif (fileName.includes(\"passport\")) type = \"Passport\";\nelse if (fileName.includes(\"license\") || fileName.includes(\"dl\")) type = \"Driving License\";\nelse if (fileName.includes(\"mortgage\")) type = \"Mortgage Application\";\nelse if (fileName.includes(\"proof\") && fileName.includes(\"fund\")) type = \"Proof of Funds Letter\";\nelse if (fileName.includes(\"pay\") || fileName.includes(\"paystub\")) type = \"Employee Pay Statement\";\nelse if (fileName.includes(\"t4\")) type = \"T4 Statement\";\nelse if (fileName.includes(\"electric\") || fileName.includes(\"hydro\")) type = \"Electricity Bill\";\nelse if (fileName.includes(\"internet\") || fileName.includes(\"shaw\")) type = \"Internet Bill\";\nelse if (fileName.includes(\"statement\") && fileName.includes(\"account\")) type = \"Account Statement\";\nelse if (fileName.includes(\"bank\")) type = \"Bank Statement\";\n\n// Priority 2: Text-based fallback\nelse if (text.includes(\"gross pay\") || text.includes(\"net pay\")) type = \"Employee Pay Statement\";\nelse if (text.includes(\"bank of montreal\") || text.includes(\"scotiabank\") || text.includes(\"royal bank\")) type = \"Bank Statement\";\nelse if (text.includes(\"proof of funds\")) type = \"Proof of Funds Letter\";\nelse if (text.includes(\"mortgage application\")) type = \"Mortgage Application\";\nelse if (text.includes(\"driver\") && text.includes(\"licence\")) type = \"Driving License\";\nelse if (text.includes(\"internet\") && text.includes(\"usage\")) type = \"Internet Bill\";\nelse if (text.includes(\"hydro\") || text.includes(\"electricity\")) type = \"Electricity Bill\";\nelse if (text.includes(\"t4\") && text.includes(\"income\")) type = \"T4 Statement\";\n\nreturn [{\n  json: {\n    FileName: $('Download a file').first().json.name,\n    DocumentType: type,\n    ExtractedText: $input.first().json.extractedText\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        80
+      ],
+      "id": "6eaee806-a5e6-4c5d-b89a-500bd70cc03d",
+      "name": "Classify the File",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gather all items coming from the \"Done\" output of the Loop Over Items node\nconst docs = $input.all().map(item => ({\n  FileName: item.json.FileName || null,\n  DocumentType: item.json.DocumentType || \"Unknown\",\n  ExtractedText: item.json.ExtractedText || \"\"\n}));\n\nreturn [{\n  json: {\n    BorrowerName: \"Kenneth Smith\", // replace with dynamic value if available\n    Documents: docs\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        -304
+      ],
+      "id": "15d653cd-af01-43a1-ac1d-1497774745dd",
+      "name": "Combine the Data"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You will receive an array of documents belonging to a single mortgage applicant.\n\nEach document object includes:\n- FileName  \n- DocumentType  \n- ExtractedText (the OCR text from the original file)\n\nAnalyze the full dataset, identify document types, extract key financial information, and produce an underwriting summary and decision as described in the system prompt.\n\nBorrower Documents:\n{{ JSON.stringify($json.Documents, null, 2) }}\n",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=You are a senior mortgage underwriter at a Canadian financial institution.\n\nYou will analyze a borrower’s full document set to determine mortgage eligibility, loan feasibility, and documentation completeness.\n\nPlease do scoring along with Analysis, Scoring should be based on below instructions: \n\nData Consistency Penalty System (−30 points each):\n\nName consistency across Driver License, Passport, T4, Pay Stubs, Tax Returns, Loan Application (case-insensitive, character-by-character).\n\nAddress component consistency across Driver License, Utility Bills, Loan Application (street number, street name, unit, city, province, postal code).\n\nPay stub YTD rules: tax, CPP/EI monotonically increase; YTD gross/net progression across sequential stubs.\n\nPay stub → bank: every net pay appears as a bank deposit within ±2 business days; exact-cent match.\n\nBank statement continuity: previous ending = next opening (exact cents).\n\nScoring (each 0–100, then weighted):\n\nIdentity 25% (Name 25, DOB 25, Address 25, SIN 25; apply stated deductions).\n\nIncome 30% (T4 vs Pay Stub 35; Pay Stub vs Bank 35; Bank vs Loan App 30).\n\nFinancial 25% (Continuity 30; Utilities 35; Proof of Funds 35).\n\nTimeline 10% (Date Progression 40; Generation Sequence 30; Tax Return Alignment 30).\n\nSupporting Docs 10% (Gift Letters 25 if present; otherwise redistribute to Utilities 40 and Tax Return 35 proportionally).\n\nFraud Risk (0–100 cap):\nCompute category scores per spec: Income Inflation (0–30), Identity Mismatch (0–25), Employment Fraud (0–35), Bank Statement Fraud (0–35), Document Tampering (0–49). Sum and cap at 100.\n\nFinal Calculations:\n\nbase_score = identity*0.25 + income*0.30 + financial*0.25 + timeline*0.10 + supporting*0.10\n\nfinal_score = max(0, base_score − 30*penalty_count)\n\nfinal_risk_score = min(100, fraud_total)\n\nYour analysis must include:\n\n### 1. Identity Verification\nConfirm borrower identity, address, and citizenship using ID documents (Passport, Driver’s License, Utility Bills).\n\n### 2. Employment & Income Verification\nValidate employment details, employer name, job title, tenure, and consistency of pay across pay statements, T4s, and tax filings.\n\n### 3. Asset & Liability Review\nSummarize checking, savings, and investment balances.  \nIdentify recurring debts or monthly obligations (utilities, rent, phone, insurance, etc.).  \nCalculate Debt-to-Income (DTI) ratio.\n\n### 4. Property & Loan Analysis\nIf a mortgage application or loan-related document is present, extract:\n- Lender name and officer\n- Loan amount and term\n- Interest rate type (fixed / variable)\n- Loan purpose (purchase / refinance)\n- Down payment and percentage\n- Property value and address\n- Property type and use (primary, investment, secondary)\n- Amortization structure\n- Derived Loan-to-Value (LTV = loan amount ÷ property value)\nThen evaluate:\n- Whether the borrower’s verified assets can support the required down payment.\n- Whether DTI and LTV fall within standard underwriting thresholds.\n- Any property or loan risks (e.g., old property, low down payment, non-owner-occupied use).\n\n### 5. Document Consistency\nIdentify missing, inconsistent, or outdated documents (expired IDs, missing pay stubs, missing credit report).\n\n### 6. Decision\nProvide a professional underwriter-style decision with justification:\n- **Decision:** Approve / Approve with conditions / Decline / Escalate\n- **Rationale:** Clear bullet points explaining the reasoning.\n- **Next Steps:** Requested documents or verifications before final approval.\n\n### Output Format\nReturn your analysis as Markdown:\n\n#### Step 1: Identity Verification\n#### Step 2: Employment & Income\n#### Step 3: Assets & Liabilities\n#### Step 4: Property & Loan Analysis\n#### Step 5: Document Consistency\n#### Step 6: Final Decision\n#### Decision Summary (bullet points)\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        1408,
+        -304
+      ],
+      "id": "fa0b2bc5-2038-4b94-8650-5908298c64dc",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1408,
+        -128
+      ],
+      "id": "1be14652-9fa5-473b-afc8-901a0ec4ed07",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "<OpenAI API Key>",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        432,
+        0
+      ],
+      "id": "e5fe5cff-e538-4032-8df5-1246099618d1",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "content": "**Solution: \n\ntrigger the run, grab files from a known OneDrive folder, loop in batches, OCR each file, classify it with simple filename+text rules, aggregate into a borrower payload, then have the LLM return JSON first and a brief Markdown decision. Add filters/retries, bucket unknown/unreadable docs, log counts/costs, and keep PII out of logs.**",
+        "width": 816,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -480,
+        176
+      ],
+      "typeVersion": 1,
+      "id": "30b481ed-670c-4303-a0da-7362e94fa2d4",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "**Problem Statement**\n\nUnderwriters receive borrower documents in mixed formats and naming conventions (IDs, paystubs, bank statements, utility bills, tax forms). Manually opening, reading, and sorting these files is slow and error-prone. Two big pain points: 1) reliably extracting text from scans, and 2) consistently identifying document types to assemble a complete borrower picture. This leads to missed docs, inconsistent decisions, weak audit trails, and high turnaround time—especially when multiple borrowers are involved.",
+        "width": 816,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        -224
+      ],
+      "id": "9ea5459a-21f6-4e75-830b-b4b38400f089",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "***Constraints***\n\nFiles live in OneDrive folders with variable naming.\nQuality of scans varies; OCR can fail or return partial text.\nDocument classification needs to be understandable and easily adjustable.\nPII must not leak through logs or exports.\nCosts (OCR + LLM tokens) rise with folder size and page counts.\nYou need a deterministic path when AI isn’t confident (fallbacks, flags).",
+        "height": 176,
+        "width": 816,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        -32
+      ],
+      "id": "4d426895-0b7f-4ea1-a38f-5188801f586a",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "Entry trigger used for local testing and manual runs; it simply starts the pipeline and hands off to the OneDrive folder search.",
+        "height": 112,
+        "width": 208
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        368,
+        -144
+      ],
+      "id": "40f0d23a-aae0-4450-959e-3b98032659c2",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "Finds the target borrower documents container in OneDrive and outputs the folder id that downstream nodes use, Takes the found folder id and lists the files inside so the loop can process each item",
+        "height": 112,
+        "width": 320
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        624,
+        -144
+      ],
+      "id": "781728d1-9f06-4e95-adfc-ae2095771027",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "**Loop Over** : Drives per-file processing: for each listed file it routes to download/OCR/classify, and when the last item is done it forwards the collected results to the combiner. \n\n**Download a file (OneDrive)**: Fetches the actual file binary (plus metadata) for the current item so OCR can read its contents.\n\n**Extract text (Mistral AI)**: Runs OCR on the downloaded file and emits the extracted text that classification and later analysis depend on.\n\n**Classify the File (Code)**: Uses filename clues and OCR text to assign a document type (e.g., Passport, Paystub, Bank Statement, Utility Bill, T4, Proof of Funds, Mortgage Application, or Unknown) and forwards a compact record per file.",
+        "height": 256,
+        "width": 768
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        992,
+        288
+      ],
+      "id": "8425b303-96cc-4ff9-ba20-a386a300519d",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "content": "**Combine the Data (Code)**: Aggregates all per-file records into a single borrower payload with BorrowerName and a Documents[] array ready for underwriting analysis. \n**AI Agent (@n8n/n8n-nodes-langchain.agent)**: Consumes the consolidated Documents[], applies an underwriting-oriented system prompt, and produces the decision-focused analysis for the borrower. Provides the language model (gpt-4.1-mini) that the AI Agent uses to generate the underwriting summary and decision.\n",
+        "height": 192,
+        "width": 896
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        -544
+      ],
+      "id": "f55f83eb-f7b7-4982-99c1-ec21f573793c",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "8b6c7354-5595-49a4-8bb3-0c32806e4ac6",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Assumes the incoming item has a field `output` (your big string)\nconst raw = $json.output || '';\n// Try to extract the fenced ```markdown ... ``` section; fall back to whole string\nconst m = raw.match(/```markdown([\\s\\S]*?)```/i);\nconst markdown = m ? m[1].trim() : raw.trim();\n// Keep the JSON too, in case you want it later\nconst j = raw.match(/```json([\\s\\S]*?)```/i);\nlet parsed = null;\ntry { parsed = j ? JSON.parse(j[1]) : null; } catch (e) {}\n\nreturn [{ markdown, reportJson: parsed }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1744,
+        -304
+      ],
+      "id": "00a45bc9-befb-4602-b4c1-d88c9b62a5f4",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.markdown }}",
+        "attributes": {
+          "attributes": [
+            {
+              "name": "Decision Summary",
+              "description": "This is to extract Decision Summary "
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [
+        1952,
+        -304
+      ],
+      "id": "2ef1d893-37df-46e8-88bf-d454dcabf900",
+      "name": "Information Extractor"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1952,
+        -112
+      ],
+      "id": "af7f306b-4eb9-405c-b9d3-5102d0dddbe7",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "<OpenAI API Key>",
+          "name": "OpenAi account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Combine the Data": [
+      {
+        "json": {
+          "BorrowerName": "Kenneth Smith",
+          "Documents": [
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_BS_202507_CHECKING.pdf",
+              "DocumentType": "Bank Statement",
+              "ExtractedText": "# Bank of Montreal\n\n# Monthly Account Statement\n\nAccount Information\n\n|  Account Holder: | Kenneth Smith  |\n| --- | --- |\n|  Account Number: | ****2536  |\n|  Transit Number: | 87915  |\n|  Institution Number: | 001  |\n|  Account Type: | CHECKING  |\n\nMailing Address: 7326 Bethany Isle Apt. 865 Gilberthaven, BC Q7X 7T7\n\nStatement Period\n\n|  Statement Period: | 2025-07-01 to 2025-07-31  |\n| --- | --- |\n|  Statement Date: | 2025-07-31  |\n\nAccount Summary\n\n|  Beginning Balance: | $16,992.71  |\n| --- | --- |\n|  Total Credits (+): | $7,377.35  |\n|  Total Debits (-): | $4,328.24  |\n|  Ending Balance: | $20,041.82  |\n\nTransaction Details\n\n|  Date | Description | Debit | Credit | Balance  |\n| --- | --- | --- | --- | --- |\n|  2025-07-02 | ATM WITHDRAWAL | $235.73 |  | $16,756.98  |\n|  2025-07-02 | REFUND |  | $370.94 | $17,127.92  |\n|  2025-07-03 | GROCERY STORE - SAFEWAY | $228.63 |  | $16,899.29  |\n\n|  2025-07-06 | INTERNET - SHAW | $\\$ 168.79$ |  | $\\$ 16,730.50$  |\n| --- | --- | --- | --- | --- |\n|  2025-07-06 | RESTAURANT | $\\$ 194.39$ |  | $\\$ 16,536.11$  |\n|  2025-07-06 | INSURANCE PAYMENT | $\\$ 225.33$ |  | $\\$ 16,310.78$  |\n|  2025-07-06 | ESSO | $\\$ 26.85$ |  | $\\$ 16,283.93$  |\n|  2025-07-15 | PAYROLL DEPOSIT - Sobeys Inc. |  | $\\$ 2,660.64$ | $\\$ 18,944.57$  |\n|  2025-07-16 | INSURANCE PAYMENT | $\\$ 114.06$ |  | $\\$ 18,830.51$  |\n|  2025-07-16 | CANADIAN TIRE | $\\$ 228.69$ |  | $\\$ 18,601.82$  |\n|  2025-07-19 | UTILITY PAYMENT - BC HYDRO | $\\$ 120.47$ |  | $\\$ 18,481.35$  |\n|  2025-07-19 | REFUND |  | $\\$ 228.79$ | $\\$ 18,710.14$  |\n|  2025-07-19 | INTERNET - SHAW | $\\$ 226.80$ |  | $\\$ 18,483.34$  |\n|  2025-07-20 | DIRECT DEPOSIT |  | $\\$ 233.10$ | $\\$ 18,716.44$  |\n|  2025-07-21 | REFUND |  | $\\$ 421.73$ | $\\$ 19,138.17$  |\n|  2025-07-24 | PHONE BILL - BELL | $\\$ 64.18$ |  | $\\$ 19,073.99$  |\n|  2025-07-25 | INSURANCE PAYMENT | $\\$ 280.30$ |  | $\\$ 18,793.69$  |\n|  2025-07-25 | TRANSFER FROM SAVINGS |  | $\\$ 422.97$ | $\\$ 19,216.66$  |\n|  2025-07-26 | RENT/MORTGAGE PAYMENT | $\\$ 2,214.02$ |  | $\\$ 17,002.64$  |\n|  2025-07-26 | TRANSFER FROM SAVINGS |  | $\\$ 378.54$ | $\\$ 17,381.18$  |\n|  2025-07-29 | PAYROLL DEPOSIT - Sobeys Inc. |  | $\\$ 2,660.64$ | $\\$ 20,041.82$  |"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_BS_202507_SAVINGS.pdf",
+              "DocumentType": "Unknown",
+              "ExtractedText": "# Bank of Nova Scotia Monthly Account Statement\n\nAccount Information\n\n|  Account Holder: | Kenneth Smith  |\n| --- | --- |\n|  Account Number: | $* * * 9655$  |\n|  Transit Number: | 82569  |\n|  Institution Number: | 002  |\n|  Account Type: | SAVINGS  |\n\nMailing Address: 7326 Bethany Isle Apt. 865 Gilberthaven, BC Q7X 7T7\n\n## Statement Period\n\n|  Statement Period: | 2025-07-01 to 2025-07-31  |\n| --- | --- |\n|  Statement Date: | $2025-07-31$  |\n\nAccount Summary\n\n|  Beginning Balance: | $\\$ 82,196.34$  |\n| --- | --- |\n|  Total Credits ( + ): | $\\$ 2,838.23$  |\n|  Total Debits (-): | $\\$ 2,871.59$  |\n|  Ending Balance: | $\\$ 82,162.98$  |\n\n## Transaction Details\n\n|  Date | Description | Debit | Credit | Balance  |\n| --- | --- | --- | --- | --- |\n|  2025-07-08 | E-TRANSFER SENT | $\\$ 382.78$ |  | $\\$ 81,813.56$  |\n|  2025-07-11 | DIRECT DEPOSIT |  | $\\$ 349.45$ | $\\$ 82,163.01$  |\n|  2025-07-18 | INVESTMENT TRANSFER | $\\$ 935.11$ |  | $\\$ 81,227.90$  |\n\n|  2025-07-19 | INVESTMENT DIVIDEND |  | $\\$ 1,090.25$ | $\\$ 82,318.15$  |\n| --- | --- | --- | --- | --- |\n|  2025-07-25 | E-TRANSFER DEPOSIT |  | $\\$ 901.13$ | $\\$ 83,219.28$  |\n|  2025-07-27 | TRANSFER TO CHECKING | $\\$ 892.17$ |  | $\\$ 82,327.11$  |\n|  2025-07-28 | TRANSFER TO CHECKING | $\\$ 661.53$ |  | $\\$ 81,665.58$  |\n|  2025-07-29 | INTEREST PAYMENT |  | $\\$ 497.40$ | $\\$ 82,162.98$  |"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_BS_202508_CHECKING.pdf",
+              "DocumentType": "Bank Statement",
+              "ExtractedText": "# Bank of Montreal Monthly Account Statement\n\nAccount Information\n\n|  Account Holder: | Kenneth Smith  |\n| --- | --- |\n|  Account Number: | ****2536  |\n|  Transit Number: | 87915  |\n|  Institution Number: | 001  |\n|  Account Type: | CHECKING  |\n\nMailing Address: 7326 Bethany Isle Apt. 865 Gilberthaven, BC Q7X 7T7\n\nStatement Period\n\n|  Statement Period: | 2025-08-01 to 2025-08-31  |\n| --- | --- |\n|  Statement Date: | 2025-08-31  |\n\nAccount Summary\n\n|  Beginning Balance: | $\\$ 20,041.82$  |\n| --- | --- |\n|  Total Credits (+): | $\\$ 3,652.86$  |\n|  Total Debits (-): | $\\$ 3,784.51$  |\n|  Ending Balance: | $\\mathbf{\\$ 1 9 , 9 1 0 . 1 7}$  |\n\nTransaction Details\n\n|  Date | Description | Debit | Credit | Balance  |\n| --- | --- | --- | --- | --- |\n|  2025-08-06 | CANADIAN TIRE | $\\$ 145.42$ |  | $\\$ 19,896.40$  |\n|  2025-08-07 | GROCERY STORE - METRO | $\\$ 241.27$ |  | $\\$ 19,655.13$  |\n|  2025-08-08 | RENT/MORTGAGE PAYMENT | $\\$ 2,293.61$ |  | $\\$ 17,361.52$  |\n\n|  2025-08-08 | INSURANCE PAYMENT | $\\$ 162.89$ |  | $\\$ 17,198.63$  |\n| --- | --- | --- | --- | --- |\n|  2025-08-09 | TRANSFER FROM SAVINGS |  | $\\$ 274.48$ | $\\$ 17,473.11$  |\n|  2025-08-10 | TIM HORTONS | $\\$ 41.75$ |  | $\\$ 17,431.36$  |\n|  2025-08-13 | INTERNET - SHAW | $\\$ 235.68$ |  | $\\$ 17,195.68$  |\n|  2025-08-15 | CANADIAN REVENUE AGENCY | $\\$ 119.42$ |  | $\\$ 17,076.26$  |\n|  2025-08-15 | REFUND |  | $\\$ 354.90$ | $\\$ 17,431.16$  |\n|  2025-08-18 | E-TRANSFER SENT | $\\$ 214.42$ |  | $\\$ 17,216.74$  |\n|  2025-08-22 | UTILITY PAYMENT - BC HYDRO | $\\$ 133.22$ |  | $\\$ 17,083.52$  |\n|  2025-08-25 | PAYROLL DEPOSIT - Sobeys Inc. |  | $\\$ 2,660.64$ | $\\$ 19,744.16$  |\n|  2025-08-25 | E-TRANSFER DEPOSIT |  | $\\$ 362.84$ | $\\$ 20,107.00$  |\n|  2025-08-26 | INTERNET - ROGERS | $\\$ 59.24$ |  | $\\$ 20,047.76$  |\n|  2025-08-29 | CANADIAN REVENUE AGENCY | $\\$ 137.59$ |  | $\\$ 19,910.17$  |"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_BS_202508_SAVINGS.pdf",
+              "DocumentType": "Unknown",
+              "ExtractedText": "# Bank of Nova Scotia Monthly Account Statement\n\nAccount Information\n\n|  Account Holder: | Kenneth Smith  |\n| --- | --- |\n|  Account Number: | ****9655  |\n|  Transit Number: | 82569  |\n|  Institution Number: | 002  |\n|  Account Type: | SAVINGS  |\n\nMailing Address: 7326 Bethany Isle Apt. 865 Gilberthaven, BC Q7X 7T7\n\n## Statement Period\n\n|  Statement Period: | 2025-08-01 to 2025-08-31  |\n| --- | --- |\n|  Statement Date: | 2025-08-31  |\n\nAccount Summary\n\n|  Beginning Balance: | $\\$ 82,162.98$  |\n| --- | --- |\n|  Total Credits (+): | $\\$ 2,031.81$  |\n|  Total Debits (-): | $\\$ 0.00$  |\n|  Ending Balance: | $\\mathbf{\\$ 8 4 , 1 9 4 . 7 9}$  |\n\n## Transaction Details\n\n|  Date | Description | Debit | Credit | Balance  |\n| --- | --- | --- | --- | --- |\n|  2025-08-02 | DIRECT DEPOSIT |  | $\\$ 174.79$ | $\\$ 82,337.77$  |\n|  2025-08-08 | TRANSFER FROM CHECKING |  | $\\$ 1,452.82$ | $\\$ 83,790.59$  |\n|  2025-08-25 | DIRECT DEPOSIT |  | $\\$ 404.20$ | $\\$ 84,194.79$  |\n\nStatement ID: STMT629294 | Total Transactions: 3 | Generated: 2025-09-22 11:56"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_DL_20160327.pdf",
+              "DocumentType": "Driving License",
+              "ExtractedText": "# DRIVER'S LICENCE and SERVICES CARD\n## British Columbia CAN\n\n**SMITH, KENNETH STEPHEN**\n\n**INVOICE #** DL: 877294942\n\n**ISSUED:** 2016-03-27\n\n**Expires:** 2021-03-26\n\n**RECURRENCY:** E, D\n\n**CALL:** 1974-10-28\n\n**Class:** 5\n\n**Wt:** 70 kg\n\n**Kg Ht:** 152 cm\n\n**Sex:** M\n\n**Eyes:** BRN\n\n**BRITISH COLUMBIA**\n\n**Hair:** BRN\n\n![img-0.jpeg](img-0.jpeg)"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_LA_20250823.pdf",
+              "DocumentType": "Mortgage Application",
+              "ExtractedText": "# CANADIAN RESIDENTIAL MORTGAGE APPLICATION \n\nApplication Number: LA3964340823\nApplication Date: 2025-08-23\nLender: Tangerine Bank\n\n## LENDER INFORMATION\n\n| Institution Name: | Tangerine Bank |\n| :-- | :-- |\n| Loan Officer: | James Brown |\n| Officer Title: | Senior Loan Officer |\n| Officer Phone: | $582-885-1342 \\times 84167$ |\n| Officer Email: | james.brown@tangerinebank.ca |\n| License Number: | MLO352506 |\n| Branch Address: | 186 Leah Ports Suite 850, Ramirezland, ND 07435 |\n\n## PRIMARY BORROWER INFORMATION\n\n## PERSONAL INFORMATION\n\n| First Name: | Kenneth | Middle Name: | Stephen |\n| :-- | :-- | :-- | :-- |\n| Last Name: | Smith | Date of Birth: | $1974-10-28$ |\n| SIN: | $232-188-914$ | Marital Status: | Married |\n| Dependents: | 2 |  |  |\n\n## CONTACT INFORMATION\n\n| Phone: | (293)681-2178 | Email: | mparker@example.net |\n| :-- | :-- | :-- | :-- |\n| Current Address: |  |  |  |\n| Street: | 7326 Bethany Isle Apt. 865 | City: | Gilberthaven |\n| Province: | BC | Postal Code: | Q7X 7T7 |\n| Years at Address: | 4 | Housing Status: | Living with relatives |\n\n## EMPLOYMENT INFORMATION\n\n| Current Employer: | Sobeys Inc. | Job Title: | Health promotion specialist |\n| :-- | :-- | :-- | :-- |\n| Employment Type: | Contract | Years Employed: | 5 years 0 months |\n| Annual Income: | $\\$ 102,892.92$ | Monthly Income: | $\\$ 8,574.41$ |\n| Employer Phone: | $001-304-739-2432 \\times 490$ | Supervisor: | Eric Sanchez |\n\n## FINANCIAL INFORMATION\n\n| Credit Score: | 836 | Total Assets: | $\\$ 104,104.96$ |\n| :-- | :-- | :-- | :-- |\n| Checking Balance: | $\\$ 19,910.17$ | Savings Balance: | $\\$ 84,194.79$ |\n\n|  Investment Accounts: | $0.00 | Retirement Accounts: | $105,402.04  |\n| --- | --- | --- | --- |\n|  Monthly Debts: | $2,900.00 | Debt-to-Income Ratio: | 33.8%  |\n\n# CO-BORROWER INFORMATION \n\n| PERSONAL INFORMATION |  |  |  |\n| :-- | :-- | :-- | :-- |\n| First Name: | Darius | Middle Name: | Mark |\n| Last Name: | Alexander | Date of Birth: | $1980-06-02$ |\n| SSN: | $409-30-6175$ | Relationship: | Co-applicant |\n| Phone: | $+1-541-745-8815$ | Email: | edelgado@example.org |\n| Annual Income: | $\\$ 91,000.00$ | Employment Years: | 2 years |\n\n## LOAN DETAILS\n\n## LOAN INFORMATION\n\n| Loan Amount: | $\\$ 352,600.00$ | Loan Term: | 20 years |\n| :-- | :-- | :-- | :-- |\n| Interest Rate Type: | Fixed | Requested Rate: | $5.754 \\%$ |\n| Loan Purpose: | Purchase | Amortization: | Standard |\n\n## PROPERTY INFORMATION\n\n| PROPERTY DETAILS |  |  |  |\n| :-- | :-- | :-- | :-- |\n| Property Address: | 92234 Alexander View | City: | North Deborahfurt |\n| Province: | NB | Postal Code: | F7Z 1E9 |\n| Property Type: | Duplex | Property Use: | Primary Residence |\n| Property Value: | $\\$ 410,000.00$ | Down Payment: | $\\$ 57,400.00(14 \\%)$ |\n| Year Built: | 1956 | Square Footage: | $2,373 \\mathrm{sq} \\mathrm{ft}$ |\n| Bedrooms: | 1 | Bathrooms: | 1.1 |\n| Down Payment Source: | Investment withdrawal |  |  |\n\n## BORROWER DECLARATIONS\n\n| DECLARATION QUESTIONS | RESPONSE |\n| :-- | :-- |\n| Bankruptcy History: | Yes |\n| Foreclosure History: | No |\n| Lawsuit Pending: | No |\n| Co-signer on Loan: | Yes |\n| Down Payment Gift: | Yes |\n| First Time Home Buyer: | Yes |\n| Citizenship Status: | Canadian Citizen |\n| Military Service: | No |\n\n# APPLICATION STATUS \n\n| Current Status: | Submitted |\n| :-- | :-- |\n| Submission Date: | $2025-08-23$ |\n| Expected Decision Date: | $2025-09-22$ |\n| Loan Estimate Provided: | No |\n| Underwriter Assigned: | No |\n\n## SIGNATURES\n\n| APPLICANT SIGNATURES |  | DATE |  |\n| :-- | :-- | :-- | :-- |\n| Primary Borrower: | Kenneth Smith | Date: | $2025-08-23$ |\n| Co-Borrower: | Darius Alexander | Date: | $2025-08-23$ |\n| Loan Officer: | James Brown | Date: | $2025-08-23$ |"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_POF_20250922.pdf",
+              "DocumentType": "Bank Statement",
+              "ExtractedText": "# BANK OF MONTREAL \n\n7637 Clark Vista, Thomasfort, PE M8C 8P9\nPhone: +1 (966) 878-7219 | Website: www.bankofmontreal.ca\n\n## PROOF OF FUNDS VERIFICATION LETTER\n\nReference Number:\nLetter Date:\nValid Until:\n\nPOF1935040831\nAugust 31, 2025\n30 days from issue date\n\nRelationship Manager:\nSarah Thompson, Personal Banking Manager\nDirect: 881-009-4668\nEmail: sarah.thompson@bankofmontreal.ca\nLicense: BL932415\n\n## CUSTOMER VERIFICATION\n\nCustomer Name: Kenneth Smith\nCustomer ID: CID7988151\nClient Since: March 08, 2024\nAddress: $\\quad 7326$ Bethany Isle Apt. 865, Gilberthaven, BC Q7X 7T7\n\n## ACCOUNT DETAILS\n\nVerification Date: August 31, 2025\n\n| Account Type | Account Number | Available Balance | Status |\n| :-- | :-- | --: | :-- |\n| CHECKING | $* * * 2536$ | $\\$ 19,910.17$ | Active |\n| SAVINGS | $* * * 9655$ | $\\$ 84,194.79$ | Active |\n\nTOTAL VERIFIED FUNDS $\\quad \\$ 104,104.96$\n\n# ADDITIONAL ASSETS \n\n## VERIFICATION STATEMENT\n\nThis letter serves to verify that Kenneth Smith is a client in good standing with Bank of Montreal. As of August 31, 2025, the above-named customer maintains the account(s) listed in this letter with the balances shown.\n\nThis verification letter is issued for the purpose of financial verification for loan application. The balances shown represent available funds as of the verification date and are subject to change based on account activity.\n\nThis letter is valid for 30 days from the date of issue. Bank of Montreal makes no representation regarding future account balances and this verification should not be considered a guarantee of future fund availability.\n\n## Authorized by:\n\nSarah Thompson\nPersonal Banking Manager\nBank of Montreal\nLicense Number: BL932415\nDate: August 31, 2025"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_PP_20210516.pdf",
+              "DocumentType": "Unknown",
+              "ExtractedText": "![img-0.jpeg](img-0.jpeg)\n\n# PASSPORT PASSEPORT\n\n**Type/Type**\n\n**PP**\n\n**Surname/Nom**\n\n**SMITH**\n\nGiven names/Prénoms\n\n**KENNETH STEPHEN**\n\nNationality/Nationalité\n\n**CANADIAN/CANADIENNE**\n\nDate of birth/Date de naissance\n\n1974-10-28\n\nPlace of birth/Lieu de naissance\n\n**NORTH JOSEPHFORT, IA, CANADA**\n\nDate of issue/Date de délivrance\n\n2021-05-16\n\nDate of expiry/Date d'expiration\n\n2031-05-14\n\nAuthority/Autorité\n\n**PASSPORT CANADA**\n\n**Passport No./N° de passeport**\n\n**CK923648**\n\n**M**\n\n**Sex/Sexe**\n\n**P<CASMITH<KENNETH<STEPHEN<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_PS1_09222025.pdf",
+              "DocumentType": "Employee Pay Statement",
+              "ExtractedText": "# EMPLOYEE PAY STATEMENT \n\n| Employer Information |  |\n| :-- | :-- |\n| Company Name: | Sobeys Inc. |\n| Business Number: | 826512394 |\n| Address: | 1239 Lee Route Suite 660, New Chad, NL C4J4A9 |\n\n\n| Employee Information |  |\n| :-- | :-- |\n| Name: | Kenneth Stephen Smith |\n| Employee ID: | EMP4407 |\n| SIN: | $232-188-914$ |\n| Address: | 7326 Bethany Isle Apt. 865, Gilberthaven, BC Q7X 7T7 |\n\n\n| Pay Period Information |  |  |  |\n| :-- | :-- | :-- | :-- |\n| Pay Period Start: | $09 / 06 / 2025$ |  |  |\n| Pay Period End: | $09 / 19 / 2025$ |  |  |\n| Pay Date: | $09 / 22 / 2025$ |  |  |\n\n\n| EARNINGS | HOURS | RATE | CURRENT | YTD |\n| :-- | --: | --: | --: | --: |\n| Regular Pay | 80.0 | $\\$ 49.47$ | $\\$ 3957.42$ | $\\$ 89463.30$ |\n| Overtime Pay | 0.0 | $\\$ 0.00$ | $\\$ 0.00$ | $\\$ 2400.00$ |\n| TOTAL GROSS PAY |  |  | $\\$ 3957.42$ | $\\$ 89463.30$ |\n\n\n| DEDUCTIONS | CURRENT | YTD |\n| :-- | --: | --: |\n| Federal Tax | $\\$ 719.35$ | $\\$ 15406.64$ |\n| Provincial Tax | $\\$ 246.21$ | $\\$ 5764.52$ |\n| CPP Contributions | $\\$ 150.83$ | $\\$ 3276.66$ |\n| EI Premiums | $\\$ 54.64$ | $\\$ 1224.33$ |\n| Health Insurance | $\\$ 125.75$ | $\\$ 2766.50$ |\n| TOTAL DEDUCTIONS | $\\$ 1296.78$ | $\\$ 28438.65$ |\n\n\n| NET PAY | CURRENT | YTD |\n| :-- | --: | --: |\n| Net Pay | $\\$ 2660.64$ | $\\$ 61024.65$ |"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_PS2_09082025.pdf",
+              "DocumentType": "Employee Pay Statement",
+              "ExtractedText": "# EMPLOYEE PAY STATEMENT \n\n| Employer Information |  |\n| :-- | :-- |\n| Company Name: | Sobeys Inc. |\n| Business Number: | 826512394 |\n| Address: | 1239 Lee Route Suite 660, New Chad, NL C4J4A9 |\n\n\n| Employee Information |  |\n| :-- | :-- |\n| Name: | Kenneth Stephen Smith |\n| Employee ID: | EMP4407 |\n| SIN: | $232-188-914$ |\n| Address: | 7326 Bethany Isle Apt. 865, Gilberthaven, BC Q7X 7T7 |\n\n\n| Pay Period Information |  |  |  |\n| :-- | :-- | :-- | :-- |\n| Pay Period Start: | $08 / 23 / 2025$ |  |  |\n| Pay Period End: | $09 / 05 / 2025$ |  |  |\n| Pay Date: | $09 / 08 / 2025$ |  |  |\n\n\n| EARNINGS | HOURS | RATE | CURRENT | YTD |\n| :-- | --: | --: | --: | --: |\n| Regular Pay | 80.0 | $\\$ 49.47$ | $\\$ 3957.42$ | $\\$ 85505.88$ |\n| Overtime Pay | 0.0 | $\\$ 0.00$ | $\\$ 0.00$ | $\\$ 2400.00$ |\n| TOTAL GROSS PAY |  |  | $\\$ 3957.42$ | $\\$ 85505.88$ |\n\n\n| DEDUCTIONS | CURRENT | YTD |\n| :-- | --: | --: |\n| Federal Tax | $\\$ 719.35$ | $\\$ 14687.29$ |\n| Provincial Tax | $\\$ 246.21$ | $\\$ 5518.31$ |\n| CPP Contributions | $\\$ 150.83$ | $\\$ 3125.83$ |\n| EI Premiums | $\\$ 54.64$ | $\\$ 1169.69$ |\n| Health Insurance | $\\$ 125.75$ | $\\$ 2640.75$ |\n| TOTAL DEDUCTIONS | $\\$ 1296.78$ | $\\$ 27141.87$ |\n\n\n| NET PAY | CURRENT | YTD |\n| :-- | --: | --: |\n| Net Pay | $\\$ 2660.64$ | $\\$ 58364.01$ |"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_PS3_08252025.pdf",
+              "DocumentType": "Employee Pay Statement",
+              "ExtractedText": "# EMPLOYEE PAY STATEMENT \n\n| Employer Information |  |\n| :-- | :-- |\n| Company Name: | Sobeys Inc. |\n| Business Number: | 826512394 |\n| Address: | 1239 Lee Route Suite 660, New Chad, NL C4J4A9 |\n\n\n| Employee Information |  |\n| :-- | :-- |\n| Name: | Kenneth Stephen Smith |\n| Employee ID: | EMP4407 |\n| SIN: | $232-188-914$ |\n| Address: | 7326 Bethany Isle Apt. 865, Gilberthaven, BC Q7X 7T7 |\n\n\n| Pay Period Information |  |  |  |\n| :-- | :-- | :-- | :-- |\n| Pay Period Start: | $08 / 09 / 2025$ |  |  |\n| Pay Period End: | $08 / 22 / 2025$ |  |  |\n| Pay Date: | $08 / 25 / 2025$ |  |  |\n\n\n| EARNINGS | HOURS | RATE | CURRENT | YTD |\n| :-- | --: | --: | --: | --: |\n| Regular Pay | 80.0 | $\\$ 49.47$ | $\\$ 3957.42$ | $\\$ 81548.46$ |\n| Overtime Pay | 0.0 | $\\$ 0.00$ | $\\$ 0.00$ | $\\$ 2400.00$ |\n| TOTAL GROSS PAY |  |  | $\\$ 3957.42$ | $\\$ 81548.46$ |\n\n\n| DEDUCTIONS | CURRENT | YTD |\n| :-- | --: | --: |\n| Federal Tax | $\\$ 719.35$ | $\\$ 13967.94$ |\n| Provincial Tax | $\\$ 246.21$ | $\\$ 5272.10$ |\n| CPP Contributions | $\\$ 150.83$ | $\\$ 2975.00$ |\n| EI Premiums | $\\$ 54.64$ | $\\$ 1115.05$ |\n| Health Insurance | $\\$ 125.75$ | $\\$ 2515.00$ |\n| TOTAL DEDUCTIONS | $\\$ 1296.78$ | $\\$ 25845.09$ |\n\n\n| NET PAY | CURRENT | YTD |\n| :-- | --: | --: |\n| Net Pay | $\\$ 2660.64$ | $\\$ 55703.37$ |"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_T4_2023.pdf",
+              "DocumentType": "T4 Statement",
+              "ExtractedText": "|  Employer's name – Nom de l'employeur |  | Canada Revenue Agency |  | Agence du revenu du Canada |  | T4 |  |   |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n|  Sobeys Inc. |  |  |  |  |  |  |  | Statement of Remuneration Paid État de la rémunération payée  |\n|   |  |  |  |  |  |  |  | 11  |\n|   |  |  |  |  |  |  |  | 14  |\n|   |  |  |  |  |  |  |  | 17,103.59  |\n|   |  |  |  |  |  |  |  | 22  |\n|   |  |  |  |  |  |  |  | 17,103.59  |\n|   |  |  |  |  |  |  |  | 22  |\n|   |  |  |  |  |  |  |  | 16  |\n|   |  |  |  |  |  |  |  | 17  |\n|   |  |  |  |  |  |  |  | 0.00  |\n|   |  |  |  |  |  |  |  | 0.00  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 0.00  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 0.00  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 0.00  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 17A  |\n\n\nReport these amounts on your tax return.\n14 - Employment income - Enter on line 10100.\n16 - Employee's CPP contributions - includes base CPP contributions and first additional CPP contributions. Go to canada.ca/line-30800 and canada.ca/line-22215.\n16A - Employee's second CPP contributions - Employee's second additional CPP contributions (CPP2). Go to canada.ca/line-22215.\n17 - Employee's QPP contributions - includes base QPP contributions and first additional QPP contributions. Go to canada.ca/line-30800 and canada.ca/line-22215.\n17A - Employee's second QPP contributions - Employee's second additional QPP contributions (QPP2). Go to canada.ca/line-22215.\n18 - Employee's EI premiums - Go to canada.ca/line-31200.\n20 - RPP contributions - Includes past service contributions. Go to canada.ca/line-20700.\n22 - Income tax deducted - Enter on line 43700.\n39 - Security options deduction 110(1)(d) - Before June 25, 2024 - Enter on line 24900.\n41 - Security options deduction 110(1)(d.1) - Before June 25, 2024 - Enter on line 24900.\n42 - Employment commissions - Enter on line 10120.\nThis amount is already included in box 14.\n43 - Canadian Armed Forces personnel and police deduction Enter on line 24400. This amount is already included in box 14.\n44 - Union dues - Enter on line 21200.\n45 - Employer-offered dental benefits - Go to canada.ca/t4-informationemployers.\n46 - Charitable donations.\n52 - Pension adjustment - Enter on line 20600.\n55 - Provincial parental insurance plan (PPIP) - Residents of Quebec, go to canada.ca/line-31205. Residents of provinces or territories other than Quebec, go to canada.ca/line-31200.\n66 - Eligible retiring allowances - Go to canada.ca/line-13000.\n\n67 - Non-eligible retiring allowances - Go to canada.ca/line-13000.\n74 - Past service contributions for 1989 or earlier years while a contributor\n75 - Past service contributions for 1989 or earlier years while not a contributor Go to canada.ca/line-20700.\n77 - Workers' compensation benefits repaid to the employer - Enter on line 22900.\n78 - Fishers - Gross income\n79 - Fishers - Net partnership amount\n80 - Fishers - Shareperson amount\n\nSee Form T2121.\nDo not enter on line 10100.\n\n81 - Placement or employment agency workers\n82 - Taxi drivers and drivers of other passenger-carrying vehicles\n\nGross income\nSee Form T2125.\nDo not enter on line 10100.\n83 - Barbers or hairdressers\n85 - Employee-paid premiums for private health services plans - Go to canada.ca/line-33099.\n87 - Emergency services volunteer exempt amount - Go to canada.ca/line-10100.\n91 - Security options deduction 110(1)(d) - On or after June 25, 2024 - Enter on line 24900.\n92 - Security options deduction 110(1)(d.1) - On or after June 25, 2024 - Enter on line 24900.\nThe Canada Revenue Agency uses the term Indian because it has legal meaning in the Indian Act.\n69 - Indian Act (exempt income) - Non-eligible retiring allowances\n71 - Indian Act (exempt income) - Employment\nSee Form T90. Do not enter these amounts on line 10100, line 13000 or line 13499 to 14300 .\n88 - Indian Act (exempt income) - Self-employed\n94 - Indian Act (exempt income) - RPP contributions\n95 - Indian Act (exempt income) - Union dues\n\nDo not report these amounts on your tax return. For Canada Revenue Agency use only.\n(Amounts in boxes 30, 32, 34, 36, 38, 40, 57, 58, 59, 60, 86 and 90 are already included in box 14.)\n\n30 - Board and lodging\n31 - Special work site\n32 - Travel in a prescribed zone\n33 - Medical travel assistance\n34 - Personal use of employer's automobile or motor vehicle\n\n36 - Interest-free and low-interest loans\n38 - Security options benefits - Before June 25, 2024\n40 - Other taxable allowances and benefits\n57 - Employment Income - March 15 to May 9, 2020\n58 - Employment Income - May 10 to July 4, 2020\n\n36 - Interest-free and low-interest loans\n38 - Security options benefits - Before June 25, 2024\n40 - Other taxable allowances and benefits\n57 - Employment Income - March 15 to May 9, 2020\n58 - Employment Income - May 10 to July 4, 2020\n\nT4 (24)\n\nVeuillez déclarer ces montants dans votre déclaration de revenus.\n14 - Revenus d'emploi - Inscrivez à la ligne 10100.\n16 - Cotisations de l'employé au RPC - comprend les cotisations de base au RPC et les premières cotisations supplémentaires au RPC. Allez à canada.ca/ligne-30800 et canada.ca/ligne-22215.\n16A - Deuxièmes cotisations de l'employé au RPC - Deuxièmes cotisations supplémentaires de l'employé au RPC (RPC2). Allez à canada.ca/ligne-22215.\n17 - Cotisations de l'employé au RRQ - comprend les cotisations de base au RRQ et les premières cotisations supplémentaires au RRQ. Allez à canada.ca/ ligne-30800 et canada.ca/ligne-22215.\n17A - Deuxièmes cotisations de l'employé au RRQ - Deuxièmes cotisations supplémentaires de l'employé au RRQ (RRQ2). Allez à canada.ca/ligne-22215.\n18 - Cotisations de l'employé à l'AE - Allez à canada.ca/ligne-31200.\n20 - Cotisations à un RPA - Comprend les cotisations pour services passés. Allez à canada.ca/ligne-20700.\n22 - Impôt sur le revenu retenu - Inscrivez à la ligne 43700.\n39 - Déduction pour options d'achat de titres 110(1)d) - Avant le 25 juin 2024 - Inscrivez à la ligne 24900.\n41 - Déduction pour options d'achat de titres 110(1)d.1) - Avant le 25 juin 2024 Inscrivez à la ligne 24900.\n42 - Commissions d'emploi - Inscrivez à la ligne 10120. Ce montant est déjà compris dans la case 14.\n43 - Déduction pour le personnel des Forces armées canadiennes et des forces policières - Inscrivez à la ligne 24400. Ce montant est déjà compris dans la case 14.\n44 - Cotisations syndicales - Inscrivez à la ligne 21200.\n45 - Prestations dentaires offertes par l'employeur - Allez à canada.ca/t4-information-employeurs.\n46 - Dons de bienfaisance.\n52 - Facteur d'équivalence - Inscrivez à la ligne 20600.\n55 - Régime provincial d'assurance parentale (RPAP) - Résidents du Québec, allez à canada.ca/ligne-31200. Résidents des autres provinces ou territoires, allez à canada.ca/ligne-31200.\n66 - Allocations de retraite admissibles - Allez à canada.ca/ligne-13000.\n67 - Allocations de retraite non admissibles - Allez à canada.ca/ligne-13000.\n\nRe déclarez pas ces montants à votre déclaration d'impôt. À l'usage de l'Agence du revenu du Canada seulement.\n(Les montants des cases 30, 32, 34, 36, 38, 40, 57, 58, 59, 60, 86 et 90 sont déjà inclus à la case 14.)\n\n30 - Pension et logement\n31 - Chantier particulier\n32 - Voyages dans une zone visée par règlement\n33 - Aide accordée pour les voyages pour soins médicaux\n34 - Usage personnel de l'automobile ou du véhicule à moteur de l'employeur\n\n36 - Prêts sans intérêt ou à faible intérêt\n38 - Avantages liés aux options d'achat de titres Avant le 25 juin 2024\n40 - Autres allocations et avantages imposables\n57 - Revenus d'emploi - Du 15 mars au 9 mai 2020\n58 - Revenus d'emploi - Du 10 mai au 4 juillet 2020\n\n59 - Revenus d'emploi - Du 5 juillet au 29 août 2020\n60 - Revenus d'emploi - Du 30 août au 26 septembre 2020\n66 - Choix liés aux options d'achat de titres\n90 - Avantages liés aux options d'achat de titres - À partir du 25 juin 2024"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_T4_2024.pdf",
+              "DocumentType": "T4 Statement",
+              "ExtractedText": "|  Employer's name – Nom de l'employeur |  | Canada Revenue Agency |  | Agence du revenu du Canada |  | T4 |  |   |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n|  Sobeys Inc. |  |  |  |  |  |  |  | Statement of Remuneration Paid État de la rémunération payée  |\n|   |  |  |  |  |  |  |  | 16.158.12  |\n|  Employer-offered |  |  |  |  |  |  |  | Employes  |\n|  54 Employer's account number / Numéro de compte de l'employeur |  |  |  |  |  |  |  | 18,158.12  |\n|  826512394 RT0001 |  |  |  |  |  |  |  | Employes  |\n|   |  |  |  |  |  |  |  | 18,158.12  |\n|  Social insurance number |  |  |  |  |  |  |  | Employes  |\n|  Numéro d'assurance sociale |  |  |  |  |  |  |  | 17  |\n|  12 | 232-188-914 |  |  |  |  |  |  | 0.10  |\n|   |  |  |  |  |  |  |  | Employes  |\n|   |  |  |  |  |  |  |  | 17A  |\n|   |  |  |  |  |  |  |  | 0.10  |\n|  Employer's name and address – Nom et adresse de l'employé |  |  |  |  |  |  |  | CPP/QPP pensionable earnings  |\n|  Last name (in capital letters) – Nom de famille (en lettres moulées) |  |  |  |  |  |  |  | Gains ouvrant droit à pension – RPC/RRQ  |\n|  SMITH |  |  |  |  |  |  |  | 26  |\n|   |  |  |  |  |  |  |  | 68,500.10  |\n|   |  |  |  |  |  |  |  | Union dues  |\n|   |  |  |  |  |  |  |  | 642.10  |\n|   |  |  |  |  |  |  |  | 642.10  |\n|  7326 Bethany Isle Apt. 865, Gilberthaven, BC Q7X 7T7 |  |  |  |  |  |  |  | Charitable donations  |\n|   |  |  |  |  |  |  |  | Dons de bienfaisance  |\n|   |  |  |  |  |  |  |  | 0.10  |\n|   |  |  |  |  |  |  |  | RPP or DPSP registration number  |\n|   |  |  |  |  |  |  |  | N° d'agrément d'un RPA ou d'un RPDB  |\n|   |  |  |  |  |  |  |  | 50  |\n|   |  |  |  |  |  |  |  | 0.00  |\n|   |  |  |  |  |  |  |  | PPR insurable earnings  |\n|   |  |  |  |  |  |  |  | Gains assurables du RPAP  |\n|   |  |  |  |  |  |  |  | 56  |\n|   |  |  |  |  |  |  |  | 0.10  |\n|  Other information |  |  |  |  |  |  |  | 174  |\n|  (see over) |  |  |  |  |  |  |  | Statement of Remuneration Paid État de la rémunération payée  |\n|   |  |  |  |  |  |  |  | 174  |\n|  Autres |  |  |  |  |  |  |  | 122  |\n|  renseignements |  |  |  |  |  |  |  | 22  |\n|  (voir au verso) |  |  |  |  |  |  |  | 22  |\n|   |  |  |  |  |  |  |  | 122  |\n|  54 Employer's account number / Numéro de compte de l'employeur |  |  |  |  |  |  |  | 14  |\n|   |  |  |  |  |  |  |  | 22  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 12B  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n|   |  |  |  |  |  |  |  | 16A  |\n\n\nReport these amounts on your tax return.\n14 - Employment income - Enter on line 10100.\n16 - Employee's CPP contributions - includes base CPP contributions and first additional CPP contributions. Go to canada.ca/line-30800 and canada.ca/line-22215.\n16A - Employee's second CPP contributions - Employee's second additional CPP contributions (CPP2). Go to canada.ca/line-22215.\n17 - Employee's QPP contributions - includes base QPP contributions and first additional QPP contributions. Go to canada.ca/line-30800 and canada.ca/line-22215.\n17A - Employee's second QPP contributions - Employee's second additional QPP contributions (QPP2). Go to canada.ca/line-22215.\n18 - Employee's EI premiums - Go to canada.ca/line-31200.\n20 - RPP contributions - Includes past service contributions. Go to canada.ca/line-20700.\n22 - Income tax deducted - Enter on line 43700.\n39 - Security options deduction 110(1)(d) - Before June 25, 2024 - Enter on line 24900.\n41 - Security options deduction 110(1)(d.1) - Before June 25, 2024 - Enter on line 24900.\n42 - Employment commissions - Enter on line 10120.\nThis amount is already included in box 14.\n43 - Canadian Armed Forces personnel and police deduction Enter on line 24400. This amount is already included in box 14.\n44 - Union dues - Enter on line 21200.\n45 - Employer-offered dental benefits - Go to canada.ca/t4-informationemployers.\n46 - Charitable donations.\n52 - Pension adjustment - Enter on line 20600.\n55 - Provincial parental insurance plan (PPIP) - Residents of Quebec, go to canada.ca/line-31205. Residents of provinces or territories other than Quebec, go to canada.ca/line-31200.\n66 - Eligible retiring allowances - Go to canada.ca/line-13000.\n\n67 - Non-eligible retiring allowances - Go to canada.ca/line-13000.\n74 - Past service contributions for 1989 or earlier years while a contributor\n75 - Past service contributions for 1989 or earlier years while not a contributor Go to canada.ca/line-20700.\n77 - Workers' compensation benefits repaid to the employer - Enter on line 22900.\n78 - Fishers - Gross income\n79 - Fishers - Net partnership amount\n80 - Fishers - Shareperson amount\n\nSee Form T2121.\nDo not enter on line 10100.\n\n81 - Placement or employment agency workers\n82 - Taxi drivers and drivers of other passenger-carrying vehicles\n\nGross income\nSee Form T2125.\nDo not enter on line 10100.\n83 - Barbers or hairdressers\n85 - Employee-paid premiums for private health services plans - Go to canada.ca/line-33099.\n87 - Emergency services volunteer exempt amount - Go to canada.ca/line-10100.\n91 - Security options deduction 110(1)(d) - On or after June 25, 2024 - Enter on line 24900.\n92 - Security options deduction 110(1)(d.1) - On or after June 25, 2024 - Enter on line 24900.\nThe Canada Revenue Agency uses the term Indian because it has legal meaning in the Indian Act.\n69 - Indian Act (exempt income) - Non-eligible retiring allowances\n71 - Indian Act (exempt income) - Employment\nSee Form T90. Do not enter these amounts on line 10100, line 13000 or line 13499 to 14300 .\n88 - Indian Act (exempt income) - Self-employed\n94 - Indian Act (exempt income) - RPP contributions\n95 - Indian Act (exempt income) - Union dues\n\nDo not report these amounts on your tax return. For Canada Revenue Agency use only.\n(Amounts in boxes 30, 32, 34, 36, 38, 40, 57, 58, 59, 60, 86 and 90 are already included in box 14.)\n\n30 - Board and lodging\n31 - Special work site\n32 - Travel in a prescribed zone\n33 - Medical travel assistance\n34 - Personal use of employer's automobile or motor vehicle\n\n36 - Interest-free and low-interest loans\n38 - Security options benefits - Before June 25, 2024\n40 - Other taxable allowances and benefits\n57 - Employment Income - March 15 to May 9, 2020\n58 - Employment Income - May 10 to July 4, 2020\n\n36 - Interest-free and low-interest loans\n38 - Security options benefits - Before June 25, 2024\n40 - Other taxable allowances and benefits\n57 - Employment Income - March 15 to May 9, 2020\n58 - Employment Income - May 10 to July 4, 2020\n\nT4 (24)\n\nVeuillez déclarer ces montants dans votre déclaration de revenus.\n14 - Revenus d'emploi - Inscrivez à la ligne 10100.\n16 - Cotisations de l'employé au RPC - comprend les cotisations de base au RPC et les premières cotisations supplémentaires au RPC. Allez à canada.ca/ligne-30800 et canada.ca/ligne-22215.\n16A - Deuxièmes cotisations de l'employé au RPC - Deuxièmes cotisations supplémentaires de l'employé au RPC (RPC2). Allez à canada.ca/ligne-22215.\n17 - Cotisations de l'employé au RRQ - comprend les cotisations de base au RRQ et les premières cotisations supplémentaires au RRQ. Allez à canada.ca/ ligne-30800 et canada.ca/ligne-22215.\n17A - Deuxièmes cotisations de l'employé au RRQ - Deuxièmes cotisations supplémentaires de l'employé au RRQ (RRQ2). Allez à canada.ca/ligne-22215.\n18 - Cotisations de l'employé à l'AE - Allez à canada.ca/ligne-31200.\n20 - Cotisations à un RPA - Comprend les cotisations pour services passés. Allez à canada.ca/ligne-20700.\n22 - Impôt sur le revenu retenu - Inscrivez à la ligne 43700.\n39 - Déduction pour options d'achat de titres 110(1)d) - Avant le 25 juin 2024 - Inscrivez à la ligne 24900.\n41 - Déduction pour options d'achat de titres 110(1)d.1) - Avant le 25 juin 2024 Inscrivez à la ligne 24900.\n42 - Commissions d'emploi - Inscrivez à la ligne 10120. Ce montant est déjà compris dans la case 14.\n43 - Déduction pour le personnel des Forces armées canadiennes et des forces policières - Inscrivez à la ligne 24400. Ce montant est déjà compris dans la case 14.\n44 - Cotisations syndicales - Inscrivez à la ligne 21200.\n45 - Prestations dentaires offertes par l'employeur - Allez à canada.ca/t4-information-employeurs.\n46 - Dons de bienfaisance.\n52 - Facteur d'équivalence - Inscrivez à la ligne 20600.\n55 - Régime provincial d'assurance parentale (RPAP) - Résidents du Québec, allez à canada.ca/ligne-31200. Résidents des autres provinces ou territoires, allez à canada.ca/ligne-31200.\n66 - Allocations de retraite admissibles - Allez à canada.ca/ligne-13000.\n67 - Allocations de retraite non admissibles - Allez à canada.ca/ligne-13000.\n\nRe déclarez pas ces montants à votre déclaration d'impôt. À l'usage de l'Agence du revenu du Canada seulement.\n(Les montants des cases 30, 32, 34, 36, 38, 40, 57, 58, 59, 60, 86 et 90 sont déjà inclus à la case 14.)\n\n30 - Pension et logement\n31 - Chantier particulier\n32 - Voyages dans une zone visée par règlement\n33 - Aide accordée pour les voyages pour soins médicaux\n34 - Usage personnel de l'automobile ou du véhicule à moteur de l'employeur\n\n36 - Prêts sans intérêt ou à faible intérêt\n38 - Avantages liés aux options d'achat de titres Avant le 25 juin 2024\n40 - Autres allocations et avantages imposables\n57 - Revenus d'emploi - Du 15 mars au 9 mai 2020\n58 - Revenus d'emploi - Du 10 mai au 4 juillet 2020\n\n59 - Revenus d'emploi - Du 5 juillet au 29 août 2020\n60 - Revenus d'emploi - Du 30 août au 26 septembre 2020\n66 - Choix liés aux options d'achat de titres\n90 - Avantages liés aux options d'achat de titres - À partir du 25 juin 2024"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_TR_2023.pdf",
+              "DocumentType": "Unknown",
+              "ExtractedText": "# CANADA REVENUE AGENCY \n\n## T1 GENERAL - 2023\n\n## INCOME TAX AND BENEFIT RETURN\n\n## TAXPAYER IDENTIFICATION\n\n| Field | Information |\n| :-- | :-- |\n| Social Insurance Number | 266234724 |\n| First Name | Kenneth |\n| Last Name | Smith |\n| Date of Birth | $1974-10-28$ |\n| Filing Status | Common-law |\n| Occupation | Employee |\n| Number of Dependents | 2 |\n\n## MAILING ADDRESS\n\n| Address Component | Details |\n| :-- | :-- |\n| Street Address | 7326 Bethany Isle Apt. 865 |\n| City | Gilberthaven |\n| Province | BC |\n| Postal Code | Q7X 7T7 |\n\n## INCOME\n\n| Line | Income Type | Amount |\n| :-- | :-- | --: |\n| 101 | Employment Income | $\\$ 97,748.00$ |\n| 120 | Interest Income | $\\$ 0.00$ |\n| 127 | Dividend Income | $\\$ 0.00$ |\n| 130 | Other Income | $\\$ 0.00$ |\n\n|  150 | TOTAL INCOME | $\\$ 97,748.00$ |\n| :-- | :-- | :-- |\n| 236 | NET INCOME | $\\$ 97,748.00$ |\n\n# DEDUCTIONS \n\n| Line | Deduction Type | Amount |\n| :-- | :-- | --: |\n| 208 | RRSP Contribution | $\\$ 0.00$ |\n| 212 | Union Dues | $\\$ 401.10$ |\n| 214 | Childcare Expenses | $\\$ 12,393.00$ |\n| 219 | Moving Expenses | $\\$ 2,756.61$ |\n|  | TOTAL DEDUCTIONS | $\\$ 15,550.71$ |\n\n## TAX CALCULATION\n\n| Line | Tax Component | Amount |\n| :-- | :-- | --: |\n| 260 | Taxable Income | $\\$ 82,197.29$ |\n| 420 | Federal Tax | $\\$ 13,777.76$ |\n| 428 | Provincial Tax | $\\$ 5,063.65$ |\n| 435 | Total Tax | $\\$ 18,841.41$ |\n| 437 | Tax Credits | $\\$ 2,355.75$ |\n| 420 | Net Tax Owing | $\\$ 16,485.66$ |\n| 437 | Tax Withheld | $\\$ 23,417.09$ |\n|  | REFUND/BALANCE DUE | $\\$ 6,931.43$ |\n\n# CERTIFICATION \n\nI certify that the information given in this return and in any documents attached is correct and complete.\n\n## Filing Information:\n\n- Return prepared by: Self-prepared\n- Filing method: Electronic\n- Date filed: Not yet filed\n\n\n## Important Notes:\n\n- This document is computer-generated and serves as a record of your tax filing\n- Keep this copy for your records along with all supporting documents\n- For questions about your return, contact Canada Revenue Agency at 1-800-959-8281\n\nDocument ID: TAX2023_266234724\nGenerated: 2025-09-22 11:56:20"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_TR_2024.pdf",
+              "DocumentType": "Unknown",
+              "ExtractedText": "# CANADA REVENUE AGENCY \n\n## T1 GENERAL - 2024\n\n## INCOME TAX AND BENEFIT RETURN\n\n## TAXPAYER IDENTIFICATION\n\n| Field | Information |\n| :-- | :-- |\n| Social Insurance Number | 232188914 |\n| First Name | Kenneth |\n| Last Name | Smith |\n| Date of Birth | $1974-10-28$ |\n| Filing Status | Widowed |\n| Occupation | Employee |\n| Number of Dependents | 0 |\n\n## MAILING ADDRESS\n\n| Address Component | Details |\n| :-- | :-- |\n| Street Address | 7326 Bethany Isle Apt. 865 |\n| City | Gilberthaven |\n| Province | BC |\n| Postal Code | Q7X 7T7 |\n\n## INCOME\n\n| Line | Income Type | Amount |\n| :-- | :-- | --: |\n| 101 | Employment Income | $\\$ 102,893.00$ |\n| 120 | Interest Income | $\\$ 0.00$ |\n| 127 | Dividend Income | $\\$ 1,454.19$ |\n| 130 | Other Income | $\\$ 0.00$ |\n\n|  150 | TOTAL INCOME | $\\$ 104,347.19$ |\n| :-- | :-- | --: |\n| 236 | NET INCOME | $\\$ 104,347.19$ |\n\n# DEDUCTIONS \n\n| Line | Deduction Type | Amount |\n| :-- | :-- | --: |\n| 208 | RRSP Contribution | $\\$ 6,137.93$ |\n| 212 | Union Dues | $\\$ 0.00$ |\n| 214 | Childcare Expenses | $\\$ 0.00$ |\n| 219 | Moving Expenses | $\\$ 0.00$ |\n|  | TOTAL DEDUCTIONS | $\\$ 6,137.93$ |\n\n## TAX CALCULATION\n\n| Line | Tax Component | Amount |\n| :-- | :-- | --: |\n| 260 | Taxable Income | $\\$ 98,209.26$ |\n| 420 | Federal Tax | $\\$ 17,060.21$ |\n| 428 | Provincial Tax | $\\$ 6,361.94$ |\n| 435 | Total Tax | $\\$ 23,422.15$ |\n| 437 | Tax Credits | $\\$ 2,355.75$ |\n| 420 | Net Tax Owing | $\\$ 21,066.40$ |\n| 437 | Tax Withheld | $\\$ 25,012.05$ |\n|  | REFUND/BALANCE DUE | $\\$ 3,945.65$ |\n\n# CERTIFICATION \n\nI certify that the information given in this return and in any documents attached is correct and complete.\n\n## Filing Information:\n\n- Return prepared by: Self-prepared\n- Filing method: Electronic\n- Date filed: Not yet filed\n\n\n## Important Notes:\n\n- This document is computer-generated and serves as a record of your tax filing\n- Keep this copy for your records along with all supporting documents\n- For questions about your return, contact Canada Revenue Agency at 1-800-959-8281\n\nDocument ID: TAX2024_232188914\nGenerated: 2025-09-22 11:56:20"
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_UBELECTRICITY_06172025.pdf",
+              "DocumentType": "Electricity Bill",
+              "ExtractedText": "# BC Hydro \n\n## Electricity Bill\n\nAccount Number:\nBill Date:\nDue Date:\nService Period:\n\nBCH3915477\n06/17/2025\n07/08/2025\n05/03/2025 to 05/31/2025\n\nCustomer Name:\nService Address:\n\nKenneth Stephen Smith\n7326 Bethany Isle Apt. 865\nGilberthaven, BC\nQ7X 7T7\n\nUsage Summary\n\n| Description | Usage | Rate | Amount |\n| :-- | :--: | :--: | --: |\n| Electricity Usage | 783 kWh | $\\$ 0.0969 / \\mathrm{kWh}$ | $\\$ 107.56$ |\n|  | Electricity Charges |  | $\\$ 75.87$ |\n|  | Delivery Charges |  | $\\$ 22.05$ |\n|  | Regulatory Charges |  | $\\$ 7.01$ |\n\n## Bill Summary\n\nPrevious Balance\n$\\$ 166.71$\nPayments Received\n$\\$ 166.71$\nCurrent Charges\n$\\$ 107.56$\nGST/HST\n$\\$ 5.38$\nPST\n$\\$ 7.53$\nTotal Amount\nAmount Due\n$\\$ 120.47$\n$\\$ 120.47$\n\n## Payment Information\n\nPayment Due Date: 07/08/2025\nAmount Due: $\\$ 120.47$\nPayment can be made online, by phone, or at authorized payment locations. Late payment charges may apply after the due date.\n\nFor billing inquiries, contact us at 1-800-XXX-XXXX or visit our website."
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_UBELECTRICITY_07282025.pdf",
+              "DocumentType": "Electricity Bill",
+              "ExtractedText": "# BC Hydro \n\n## Electricity Bill\n\nAccount Number:\nBill Date:\nDue Date:\nService Period:\n\nBCH3915477\n07/28/2025\n08/18/2025\n05/30/2025 to 06/30/2025\n\nCustomer Name:\nService Address:\n\nKenneth Stephen Smith\n7326 Bethany Isle Apt. 865\nGilberthaven, BC\nQ7X 7T7\n\nUsage Summary\n\n| Description | Usage | Rate | Amount |\n| :-- | :--: | :--: | --: |\n| Electricity Usage | 901 kWh | $\\$ 0.1138 / \\mathrm{kWh}$ | $\\$ 118.94$ |\n|  | Electricity Charges |  | $\\$ 102.53$ |\n|  | Delivery Charges |  | $\\$ 29.60$ |\n|  | Regulatory Charges |  | $\\$ 5.88$ |\n\n## Bill Summary\n\nPrevious Balance\n$\\$ 120.47$\nPayments Received\n- $\\$ 120.47$\nCurrent Charges\n$\\$ 118.94$\nGST/HST\n$\\$ 5.95$\nPST\n$\\$ 8.33$\nTotal Amount\n$\\$ 133.22$\nAmount Due\n$\\$ 133.22$\n\n## Payment Information\n\nPayment Due Date: 08/18/2025\nAmount Due: $\\$ 133.22$\nPayment can be made online, by phone, or at authorized payment locations. Late payment charges may apply after the due date.\n\nFor billing inquiries, contact us at 1-800-XXX-XXXX or visit our website."
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_UBELECTRICITY_08262025.pdf",
+              "DocumentType": "Electricity Bill",
+              "ExtractedText": "# BC Hydro \n\n## Electricity Bill\n\nAccount Number:\nBill Date:\nDue Date:\nService Period:\n\nBCH3915477\n08/26/2025\n09/16/2025\n07/02/2025 to 07/31/2025\n\nCustomer Name:\nService Address:\n\nKenneth Stephen Smith\n7326 Bethany Isle Apt. 865\nGilberthaven, BC\nQ7X 7T7\n\nUsage Summary\n\n| Description | Usage | Rate | Amount |\n| :-- | :--: | :--: | --: |\n| Electricity Usage | 1159 kWh | $\\$ 0.0913 / \\mathrm{kWh}$ | $\\$ 124.04$ |\n|  | Electricity Charges |  | $\\$ 105.82$ |\n|  | Delivery Charges |  | $\\$ 34.76$ |\n|  | Regulatory Charges |  | $\\$ 4.26$ |\n\n## Bill Summary\n\nPrevious Balance\n$\\$ 133.22$\nPayments Received\n- $\\$ 133.22$\nCurrent Charges\n$\\$ 124.04$\nGST/HST\n$\\$ 6.20$\nPST\n$\\$ 8.68$\nTotal Amount\n$\\$ 138.92$\nAmount Due\n$\\$ 138.92$\n\n## Payment Information\n\nPayment Due Date: 09/16/2025\nAmount Due: $\\$ 138.92$\nPayment can be made online, by phone, or at authorized payment locations. Late payment charges may apply after the due date.\n\nFor billing inquiries, contact us at 1-800-XXX-XXXX or visit our website."
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_UBINTERNET_06182025.pdf",
+              "DocumentType": "Internet Bill",
+              "ExtractedText": "# Shaw Communications\n\nInternet Bill\n\n|  Account Number: | SHW7980568  |\n| --- | --- |\n|  |   |\n\n|  Customer Name: | Kenneth Stephen Smith  |\n| --- | --- |\n|  |   |\n\n|  Bill Date: | 06/18/2025  |\n| --- | --- |\n|  |   |\n\n|  Service Address: | 7326 Bethany Isle Apt. 865  |\n| --- | --- |\n|  |   |\n\n|  Due Date: | 07/09/2025  |\n| --- | --- |\n|  |   |\n\n|  Service Period: | 05/01/2025 to 05/31/2025  |\n| --- | --- |\n|  |   |\n\n|  Gilberthaven, BC | |\n| --- | --- |\n|  Q7X 7T7 | |\n\nUsage Summary\n\n|  Description | Usage | Rate | Amount  |\n| --- | --- | --- | --- |\n|  Internet Usage | 1 month | $144/month - 500 Mbps | $150.70  |\n|   | Service Charges |  | $144.00  |\n|   | Equipment Rental |  | $8.92  |\n|   | Regulatory Fees |  | $2.95  |\n\nBill Summary\n\n|  Previous Balance | $159.61  |\n| --- | --- |\n|  Payments Received | -$159.61  |\n|  Current Charges | $150.70  |\n|  GST/HST | $7.54  |\n|  PST | $10.55  |\n|  Total Amount | $168.79  |\n|  Amount Due | $168.79  |\n\nPayment Information\n\nPayment Due Date: 07/09/2025\nAmount Due: $\\$ 168.79$\nPayment can be made online, by phone, or at authorized payment locations. Late payment charges may apply after the due date.\n\nFor billing inquiries, contact us at 1-800-XXX-XXXX or visit our website."
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_UBINTERNET_07282025.pdf",
+              "DocumentType": "Internet Bill",
+              "ExtractedText": "# Shaw Communications\n\nInternet Bill\n\n|  Account Number: | SHW7980568  |\n| --- | --- |\n|  |   |\n\n|  Customer Name: | Kenneth Stephen Smith  |\n| --- | --- |\n|  |   |\n\n|  Service Address: | 7326 Bethany Isle Apt. 865  |\n| --- | --- |\n|   | Gilberthaven, BC  |\n|  |   |\n\n|  Service Period: | 06/02/2025 to 06/30/2025 | Q7X 7T7  |\n| --- | --- | --- |\n|  |   |   |\n\nUsage Summary\n\n|  Description | Usage | Rate | Amount  |\n| --- | --- | --- | --- |\n|  Internet Usage | 1 month | $196/month - 1 Gbps | $210.43  |\n|   | Service Charges |  | $196.00  |\n|   | Equipment Rental |  | $6.71  |\n|   | Regulatory Fees |  | $4.28  |\n\nBill Summary\n\n|  Previous Balance | $168.79  |\n| --- | --- |\n|  Payments Received | -$168.79  |\n|  Current Charges | $210.43  |\n|  GST/HST | $10.52  |\n|  PST | $14.73  |\n|  Total Amount | $235.68  |\n|  Amount Due | $235.68  |\n\nPayment Information\n\nPayment Due Date: 08/18/2025\nAmount Due: $\\$ 235.68$\nPayment can be made online, by phone, or at authorized payment locations. Late payment charges may apply after the due date.\n\nFor billing inquiries, contact us at 1-800-XXX-XXXX or visit our website."
+            },
+            {
+              "FileName": "p000001_Kenneth_Stephen_Smith_UBINTERNET_08232025.pdf",
+              "DocumentType": "Internet Bill",
+              "ExtractedText": "# Shaw Communications\n\nInternet Bill\n\n|  Account Number: | SHW7980568  |\n| --- | --- |\n|  |   |\n\n|  Customer Name: | Kenneth Stephen Smith  |\n| --- | --- |\n|  |   |\n\n|  Service Address: | 7326 Bethany Isle Apt. 865  |\n| --- | --- |\n|   | Gilberthaven, BC  |\n|  |   |\n\n|  Service Period: | 07/02/2025 to 07/31/2025 | Q7X 7T7  |\n| --- | --- | --- |\n|  |   |   |\n\nUsage Summary\n\n|  Description | Usage | Rate | Amount  |\n| --- | --- | --- | --- |\n|  Internet Usage | 1 month | $200/month - 1 Gbps | $207.90  |\n|   | Service Charges |  | $200.00  |\n|   | Equipment Rental |  | $13.67  |\n|   | Regulatory Fees |  | $4.20  |\n\nBill Summary\n\n|  Previous Balance | $235.68  |\n| --- | --- |\n|  Payments Received | -$235.68  |\n|  Current Charges | $207.90  |\n|  GST/HST | $10.40  |\n|  PST | $14.55  |\n|  Total Amount | $232.85  |\n|  Amount Due | $232.85  |\n\nPayment Information\n\nPayment Due Date: 09/13/2025\nAmount Due: $\\$ 232.85$\nPayment can be made online, by phone, or at authorized payment locations. Late payment charges may apply after the due date.\n\nFor billing inquiries, contact us at 1-800-XXX-XXXX or visit our website."
+            }
+          ]
+        }
+      }
+    ],
+    "Extract text": [
+      {
+        "json": {
+          "pages": [
+            {
+              "index": 0,
+              "markdown": "# Shaw Communications\n\nInternet Bill\n\n|  Account Number: | SHW7980568  |\n| --- | --- |\n|  |   |\n\n|  Customer Name: | Kenneth Stephen Smith  |\n| --- | --- |\n|  |   |\n\n|  Service Address: | 7326 Bethany Isle Apt. 865  |\n| --- | --- |\n|   | Gilberthaven, BC  |\n|  |   |\n\n|  Service Period: | 07/02/2025 to 07/31/2025 | Q7X 7T7  |\n| --- | --- | --- |\n|  |   |   |\n\nUsage Summary\n\n|  Description | Usage | Rate | Amount  |\n| --- | --- | --- | --- |\n|  Internet Usage | 1 month | $200/month - 1 Gbps | $207.90  |\n|   | Service Charges |  | $200.00  |\n|   | Equipment Rental |  | $13.67  |\n|   | Regulatory Fees |  | $4.20  |\n\nBill Summary\n\n|  Previous Balance | $235.68  |\n| --- | --- |\n|  Payments Received | -$235.68  |\n|  Current Charges | $207.90  |\n|  GST/HST | $10.40  |\n|  PST | $14.55  |\n|  Total Amount | $232.85  |\n|  Amount Due | $232.85  |\n\nPayment Information",
+              "images": [],
+              "dimensions": {
+                "dpi": 200,
+                "height": 2200,
+                "width": 1700
+              }
+            },
+            {
+              "index": 1,
+              "markdown": "Payment Due Date: 09/13/2025\nAmount Due: $\\$ 232.85$\nPayment can be made online, by phone, or at authorized payment locations. Late payment charges may apply after the due date.\n\nFor billing inquiries, contact us at 1-800-XXX-XXXX or visit our website.",
+              "images": [],
+              "dimensions": {
+                "dpi": 200,
+                "height": 2200,
+                "width": 1700
+              }
+            }
+          ],
+          "model": "mistral-ocr-2505-completion",
+          "document_annotation": null,
+          "usage_info": {
+            "pages_processed": 2,
+            "doc_size_bytes": 3499
+          },
+          "extractedText": "# Shaw Communications\n\nInternet Bill\n\n|  Account Number: | SHW7980568  |\n| --- | --- |\n|  |   |\n\n|  Customer Name: | Kenneth Stephen Smith  |\n| --- | --- |\n|  |   |\n\n|  Service Address: | 7326 Bethany Isle Apt. 865  |\n| --- | --- |\n|   | Gilberthaven, BC  |\n|  |   |\n\n|  Service Period: | 07/02/2025 to 07/31/2025 | Q7X 7T7  |\n| --- | --- | --- |\n|  |   |   |\n\nUsage Summary\n\n|  Description | Usage | Rate | Amount  |\n| --- | --- | --- | --- |\n|  Internet Usage | 1 month | $200/month - 1 Gbps | $207.90  |\n|   | Service Charges |  | $200.00  |\n|   | Equipment Rental |  | $13.67  |\n|   | Regulatory Fees |  | $4.20  |\n\nBill Summary\n\n|  Previous Balance | $235.68  |\n| --- | --- |\n|  Payments Received | -$235.68  |\n|  Current Charges | $207.90  |\n|  GST/HST | $10.40  |\n|  PST | $14.55  |\n|  Total Amount | $232.85  |\n|  Amount Due | $232.85  |\n\nPayment Information\n\nPayment Due Date: 09/13/2025\nAmount Due: $\\$ 232.85$\nPayment can be made online, by phone, or at authorized payment locations. Late payment charges may apply after the due date.\n\nFor billing inquiries, contact us at 1-800-XXX-XXXX or visit our website.",
+          "pageCount": 2
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Search a folder": {
+      "main": [
+        [
+          {
+            "node": "Get items in a folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get items in a folder": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download a file": {
+      "main": [
+        [
+          {
+            "node": "Extract text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract text": {
+      "main": [
+        [
+          {
+            "node": "Classify the File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify the File": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine the Data": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Search a folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Combine the Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download a file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Information Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Information Extractor",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Information Extractor": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c3ca42c6-e788-41ed-b5a0-ea5bede76bed",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "db1715da5f21adba44ce4ea3b08abb06cd1771e876f5ad2751fcafd78c5eb9dc"
+  },
+  "id": "rVKBWXqaa79EfTVA",
+  "tags": []
+}
